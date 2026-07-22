@@ -32,7 +32,8 @@ Or just `./build.sh` to produce `dist/WindowPinner.app` without installing.
 1. On first launch macOS asks for **Accessibility** permission
    (System Settings → Privacy & Security → Accessibility). This is required —
    it's the API used to read and move other apps' windows.
-2. In the 📌 menu, enable **Start at Login**.
+2. Click the pin icon that appeared in the menu bar and enable
+   **Start at Login**.
 
 > After rebuilding the app, macOS may silently revoke Accessibility (the
 > ad-hoc code signature changes). Fix: toggle WindowPinner off and on again
