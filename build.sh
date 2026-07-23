@@ -14,8 +14,8 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-VERSION="1.2"
-BUILD="3"
+VERSION="1.3"
+BUILD="4"
 NOTARY_PROFILE="WindowPinner"
 
 echo "==> Building (release)..."

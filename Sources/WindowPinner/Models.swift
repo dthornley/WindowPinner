@@ -34,4 +34,6 @@ struct Layout: Codable {
     var savedAt: Date
     var displays: [DisplayInfo]
     var windows: [WindowRecord]
+    /// Mission Control mapping: display UUID -> ordered desktop (Space) UUIDs.
+    var spaces: [String: [String]]?
 }

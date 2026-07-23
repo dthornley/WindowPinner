@@ -33,6 +33,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         get { UserDefaults.standard.object(forKey: "restoreArrangement") as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: "restoreArrangement") }
     }
+    private var restoreSpacesEnabled: Bool {
+        get { UserDefaults.standard.object(forKey: "restoreSpaces") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "restoreSpaces") }
+    }
 
     // MARK: - Lifecycle
 
@@ -104,6 +108,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         arr.target = self
         menu.addItem(arr)
 
+        let spaces = NSMenuItem(title: "Also Restore Desktops to Displays", action: #selector(toggleSpaces), keyEquivalent: "")
+        spaces.target = self
+        spaces.toolTip = "Puts Mission Control desktops back on their saved displays. Applying it briefly restarts the Dock."
+        menu.addItem(spaces)
+
         let login = NSMenuItem(title: "Start at Login", action: #selector(toggleLogin), keyEquivalent: "")
         login.target = self
         menu.addItem(login)
@@ -122,6 +131,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func toggleAuto() { autoEnabled.toggle() }
 
     @objc private func toggleArrangement() { restoreArrangementEnabled.toggle() }
+
+    @objc private func toggleSpaces() { restoreSpacesEnabled.toggle() }
 
     @objc private func toggleLogin() {
         let service = SMAppService.mainApp
@@ -197,7 +208,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             fingerprint: Displays.fingerprint(of: displays),
             savedAt: Date(),
             displays: displays,
-            windows: windows
+            windows: windows,
+            spaces: Spaces.currentMapping()
         )
         store.save(layout)
         log.info("Snapshot (\(reason, privacy: .public)): \(windows.count) windows on \(displays.count) display(s)")
@@ -231,24 +243,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             log.info("Restore (\(reason, privacy: .public)): no saved layout for current display set")
             return
         }
-        if restoreArrangementEnabled && Displays.restoreArrangement(layout.displays) {
-            // Give WindowServer a moment after rearranging displays.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-                let moved = Windows.restore(layout.windows)
-                self?.noteRestore(moved: moved, arrangementFixed: true)
-                log.info("Restore (\(reason, privacy: .public)): arrangement fixed, \(moved) window(s) moved")
+        let arrangementFixed = restoreArrangementEnabled && Displays.restoreArrangement(layout.displays)
+        // Give WindowServer a moment if displays were just rearranged.
+        DispatchQueue.main.asyncAfter(deadline: .now() + (arrangementFixed ? 1.5 : 0)) { [weak self] in
+            guard let self else { return }
+            var spacesFixed = false
+            if self.restoreSpacesEnabled,
+               let savedSpaces = layout.spaces, !savedSpaces.isEmpty,
+               !Spaces.mappingMatches(savedSpaces) {
+                log.info("Restore (\(reason, privacy: .public)): desktops are on the wrong displays")
+                self.suppressSnapshotsUntil = Date().addingTimeInterval(45)
+                spacesFixed = Spaces.restoreMapping(savedSpaces)
             }
-        } else {
-            let moved = Windows.restore(layout.windows)
-            noteRestore(moved: moved, arrangementFixed: false)
-            log.info("Restore (\(reason, privacy: .public)): \(moved) window(s) moved")
+            // After a Dock restart, wait for Mission Control to settle
+            // before placing windows.
+            DispatchQueue.main.asyncAfter(deadline: .now() + (spacesFixed ? 4 : 0)) {
+                let moved = Windows.restore(layout.windows)
+                self.noteRestore(moved: moved, arrangementFixed: arrangementFixed, spacesFixed: spacesFixed)
+                log.info("Restore (\(reason, privacy: .public)): \(moved) window(s) moved\(arrangementFixed ? ", displays rearranged" : "")\(spacesFixed ? ", desktops re-mapped" : "")")
+            }
         }
     }
 
-    private func noteRestore(moved: Int, arrangementFixed: Bool) {
+    private func noteRestore(moved: Int, arrangementFixed: Bool, spacesFixed: Bool) {
         let time = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .short)
         var summary = "Last restore: \(moved) window\(moved == 1 ? "" : "s") moved at \(time)"
         if arrangementFixed { summary += ", displays rearranged" }
+        if spacesFixed { summary += ", desktops re-mapped" }
         lastRestoreSummary = summary
     }
 }
@@ -261,6 +282,7 @@ extension AppDelegate: NSMenuDelegate {
             switch item.action {
             case #selector(toggleAuto): item.state = autoEnabled ? .on : .off
             case #selector(toggleArrangement): item.state = restoreArrangementEnabled ? .on : .off
+            case #selector(toggleSpaces): item.state = restoreSpacesEnabled ? .on : .off
             case #selector(toggleLogin): item.state = SMAppService.mainApp.status == .enabled ? .on : .off
             default: break
             }

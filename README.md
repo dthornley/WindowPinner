@@ -18,6 +18,14 @@ monitor arrangement after sleep, lid-close, or unplugging external monitors.
   *arrangement* (macOS loves swapping left/right monitors), then moves every
   window back. It retries once more a few seconds later, because some apps
   reposition themselves late.
+- **Puts desktops back on their displays.** macOS sometimes moves whole
+  Mission Control desktops (Spaces) to a different monitor after
+  sleep/reconnect. WindowPinner snapshots which desktops belong to which
+  display and, when they've migrated, rewrites the mapping and restarts the
+  Dock (a brief flicker; running apps are unaffected) before placing
+  windows. Toggleable via "Also Restore Desktops to Displays"; the previous
+  mapping is backed up under
+  `~/Library/Application Support/WindowPinner/spaces-backups/`.
 
 ## Build & install
 
