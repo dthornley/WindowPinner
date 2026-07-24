@@ -13,11 +13,21 @@ monitor arrangement after sleep, lid-close, or unplugging external monitors.
   configuration has been stable for 20+ seconds), plus right before sleep.
   It never snapshots in the messy window right after wake or a monitor
   plug/unplug, so a scrambled layout can't overwrite a good one.
-- **Restores automatically.** After wake and after the display set changes,
-  it waits for the monitors to settle, optionally fixes the display
-  *arrangement* (macOS loves swapping left/right monitors), then moves every
-  window back. It retries once more a few seconds later, because some apps
-  reposition themselves late.
+- **Treats your monitor arrangement and desktop layout as reference data.**
+  The display *arrangement* (monitor positions) and the *desktop→monitor*
+  mapping are captured the first time a display set is seen and refreshed
+  only when you choose **Snapshot Now** — automatic snapshots never touch
+  them. That way a transient post-wake or replug scramble can't quietly be
+  recorded as your new "correct" setup. Window positions still update on
+  every automatic snapshot. **If you deliberately rearrange your monitors or
+  desktops, pick Snapshot Now** to save the new arrangement as the reference.
+- **Restores automatically.** After system wake, after *display* wake (screen
+  saver / monitors blanking — which does not post a system wake event), after
+  the display set changes, and whenever the live arrangement or desktop
+  grouping is found to have drifted from the saved layout. It waits for the
+  monitors to settle, optionally fixes the display *arrangement* (macOS loves
+  swapping left/right monitors), then moves every window back, retrying across
+  a widening window because displays and apps both settle late.
 - **Puts desktops back on their displays.** macOS sometimes moves whole
   Mission Control desktops (Spaces) to a different monitor after
   sleep/reconnect. WindowPinner snapshots which desktops belong to which
@@ -50,7 +60,9 @@ Or just `./build.sh` to produce `dist/WindowPinner.app` without installing.
 ## Menu
 
 - **Snapshot Now / Restore Now** — manual save/restore for the current
-  monitor setup.
+  monitor setup. Snapshot Now is also how you re-save the monitor arrangement
+  and desktop→display mapping after deliberately changing them (automatic
+  snapshots preserve the existing reference rather than overwriting it).
 - **Automatic Snapshot & Restore** — the whole automatic behavior; untick to
   pause.
 - **Also Restore Display Arrangement** — re-applies saved monitor positions

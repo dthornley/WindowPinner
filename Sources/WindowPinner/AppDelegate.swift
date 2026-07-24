@@ -17,6 +17,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pendingRestores: [DispatchWorkItem] = []
     private var lastFingerprint = ""
     private var lastRestoreSummary: String?
+    // Drift repair can restart the Dock, so rate-limit the periodic catch-all
+    // in case a drift is detected that we can't actually fix.
+    private var lastDriftRepair = Date.distantPast
+    private let driftRepairCooldown: TimeInterval = 300
 
     private static var versionString: String {
         let info = Bundle.main.infoDictionary
@@ -53,6 +57,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                              name: NSWorkspace.willSleepNotification, object: nil)
         wsCenter.addObserver(self, selector: #selector(didWake),
                              name: NSWorkspace.didWakeNotification, object: nil)
+        // Display sleep (screen saver / monitors powering down) does NOT post
+        // willSleep/didWake — those are system sleep only. Monitors coming back
+        // from display sleep is one of the most common ways macOS scrambles the
+        // arrangement, so watch for it explicitly.
+        wsCenter.addObserver(self, selector: #selector(screensDidWake),
+                             name: NSWorkspace.screensDidWakeNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(screensChanged),
                                                name: NSApplication.didChangeScreenParametersNotification, object: nil)
 
@@ -164,8 +174,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func didWake() {
         isSleeping = false
         guard autoEnabled else { return }
-        suppressSnapshotsUntil = Date().addingTimeInterval(30)
-        scheduleRestores(delays: [3, 10], reason: "didWake")
+        log.info("System woke → scheduling restores")
+        suppressSnapshotsUntil = Date().addingTimeInterval(35)
+        // Displays keep settling for a while after wake; re-apply several
+        // times so a late re-scramble by macOS still gets corrected. Each
+        // attempt is idempotent — it no-ops once the arrangement and desktop
+        // mapping already match.
+        scheduleRestores(delays: [3, 8, 16, 28], reason: "didWake")
+    }
+
+    /// Monitors woke from display sleep (screen saver, blanked displays). The
+    /// display *set* is usually unchanged, so this never reaches the
+    /// fingerprint-changed path — but the arrangement and desktop grouping may
+    /// well have been scrambled while the panels were off.
+    @objc private func screensDidWake() {
+        guard autoEnabled, !isSleeping else { return }
+        log.info("Screens woke → scheduling restores")
+        suppressSnapshotsUntil = Date().addingTimeInterval(35)
+        cancelPendingRestores()
+        scheduleRestores(delays: [3, 8, 16, 28], reason: "screensDidWake")
     }
 
     @objc private func screensChanged() {
@@ -178,15 +205,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if changed {
             log.info("Display set changed → \(fingerprint, privacy: .public)")
             cancelPendingRestores()
-            // Debounce: monitors often enumerate one at a time when plugged in.
-            scheduleRestores(delays: [4, 12], reason: "displayChange")
+            // Debounce: monitors often enumerate one at a time when plugged in,
+            // and keep settling afterwards — re-apply across a wider window.
+            scheduleRestores(delays: [4, 10, 20], reason: "displayChange")
+        } else if driftedFromSavedLayout(fingerprint: fingerprint) {
+            // Same monitors as before, so the fingerprint is unchanged — but
+            // macOS has moved them (or their desktops) since the snapshot.
+            // Without this branch the whole scramble goes unnoticed, because
+            // the fingerprint only encodes *which* displays are attached, not
+            // where they sit.
+            log.info("Display arrangement/desktops drifted from saved layout → scheduling restores")
+            cancelPendingRestores()
+            scheduleRestores(delays: [2, 6, 14], reason: "drift")
         }
+    }
+
+    /// True when the saved layout for this display set no longer matches
+    /// reality in the ways we know how to repair.
+    private func driftedFromSavedLayout(fingerprint: String) -> Bool {
+        guard let layout = store.layout(for: fingerprint) else { return false }
+        if restoreArrangementEnabled, !Displays.arrangementMatches(layout.displays) {
+            return true
+        }
+        if restoreSpacesEnabled, let spaces = layout.spaces, !spaces.isEmpty,
+           !Spaces.mappingMatches(spaces) {
+            return true
+        }
+        return false
     }
 
     // MARK: - Snapshot logic
 
     private func periodicSnapshot() {
         guard autoEnabled else { return }
+        // Safety net: the notifications above don't reliably fire for every way
+        // macOS rearranges displays (display sleep is the notable offender), so
+        // re-check on every tick and repair drift even if no event arrived.
+        if !isSleeping, pendingRestores.isEmpty,
+           Date().timeIntervalSince(lastDriftRepair) >= driftRepairCooldown,
+           driftedFromSavedLayout(fingerprint: Displays.currentFingerprint()) {
+            log.info("Periodic check: arrangement/desktops drifted → scheduling restore")
+            lastDriftRepair = Date()
+            scheduleRestores(delays: [1], reason: "periodicDrift")
+            return
+        }
         snapshotIfStable(reason: "periodic")
     }
 
@@ -204,15 +266,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !displays.isEmpty else { return }
         let windows = Windows.snapshot()
         guard !windows.isEmpty else { return }
+
+        let fingerprint = Displays.fingerprint(of: displays)
+        let existing = store.layout(for: fingerprint)
+        let isManual = (reason == "manual")
+
+        // The display arrangement and the desktop→monitor mapping are treated
+        // as "reference" data: they describe how you deliberately set up this
+        // display set. We capture them the first time a display set is seen,
+        // and refresh them whenever you snapshot manually — but an *automatic*
+        // snapshot must never overwrite them. Otherwise a transient post-wake
+        // or replug scramble gets recorded as the new "correct" layout, and
+        // every later restore faithfully reproduces the mess. Window geometry
+        // still updates on every snapshot (that part is never scrambled).
+        let referenceDisplays: [DisplayInfo]
+        let referenceSpaces: [String: [String]]?
+        let preserved: Bool
+        if let existing, !isManual {
+            referenceDisplays = existing.displays
+            referenceSpaces = existing.spaces
+            preserved = true
+        } else {
+            referenceDisplays = displays
+            referenceSpaces = Spaces.currentMapping()
+            preserved = false
+        }
+
         let layout = Layout(
-            fingerprint: Displays.fingerprint(of: displays),
+            fingerprint: fingerprint,
             savedAt: Date(),
-            displays: displays,
+            displays: referenceDisplays,
             windows: windows,
-            spaces: Spaces.currentMapping()
+            spaces: referenceSpaces
         )
         store.save(layout)
-        log.info("Snapshot (\(reason, privacy: .public)): \(windows.count) windows on \(displays.count) display(s)")
+        let note = preserved ? " (arrangement & desktops preserved)" : " (arrangement & desktops captured)"
+        log.info("Snapshot (\(reason, privacy: .public)): \(windows.count) windows on \(displays.count) display(s)\(note)")
     }
 
     // MARK: - Restore logic
@@ -237,15 +326,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func restoreLayout(reason: String) {
-        guard Windows.accessibilityGranted() else { return }
+        guard Windows.accessibilityGranted() else {
+            log.warning("Restore (\(reason, privacy: .public)): skipped — no Accessibility permission")
+            return
+        }
         let fingerprint = Displays.currentFingerprint()
         guard let layout = store.layout(for: fingerprint) else {
             log.info("Restore (\(reason, privacy: .public)): no saved layout for current display set")
             return
         }
+        let arrangementOK = Displays.arrangementMatches(layout.displays)
+        let spacesOK: Bool
+        if let savedSpaces = layout.spaces, !savedSpaces.isEmpty {
+            spacesOK = Spaces.mappingMatches(savedSpaces)
+        } else {
+            spacesOK = true
+        }
+        log.info("Restore (\(reason, privacy: .public)): arrangement \(arrangementOK ? "matches" : "DIFFERS", privacy: .public), desktops \(spacesOK ? "match" : "DIFFER", privacy: .public)")
+
         let arrangementFixed = restoreArrangementEnabled && Displays.restoreArrangement(layout.displays)
-        // Give WindowServer a moment if displays were just rearranged.
-        DispatchQueue.main.asyncAfter(deadline: .now() + (arrangementFixed ? 1.5 : 0)) { [weak self] in
+        // Give WindowServer time to settle if displays were just rearranged,
+        // so the desktop→display mapping is read against the final geometry.
+        DispatchQueue.main.asyncAfter(deadline: .now() + (arrangementFixed ? 2.5 : 0)) { [weak self] in
             guard let self else { return }
             var spacesFixed = false
             if self.restoreSpacesEnabled,
@@ -260,7 +362,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + (spacesFixed ? 4 : 0)) {
                 let moved = Windows.restore(layout.windows)
                 self.noteRestore(moved: moved, arrangementFixed: arrangementFixed, spacesFixed: spacesFixed)
-                log.info("Restore (\(reason, privacy: .public)): \(moved) window(s) moved\(arrangementFixed ? ", displays rearranged" : "")\(spacesFixed ? ", desktops re-mapped" : "")")
+                // Build the suffix separately and mark it public: os.log
+                // redacts dynamic string interpolation by default, which
+                // otherwise hides exactly the part worth reading.
+                let extras = (arrangementFixed ? ", displays rearranged" : "")
+                    + (spacesFixed ? ", desktops re-mapped" : "")
+                log.info("Restore (\(reason, privacy: .public)): \(moved) window(s) moved\(extras, privacy: .public)")
             }
         }
     }
