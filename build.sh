@@ -14,8 +14,8 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-VERSION="1.4"
-BUILD="5"
+VERSION="1.5"
+BUILD="6"
 NOTARY_PROFILE="WindowPinner"
 
 echo "==> Building (release)..."
@@ -23,9 +23,10 @@ swift build -c release
 
 APP=dist/WindowPinner.app
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 cp .build/release/WindowPinner "$APP/Contents/MacOS/WindowPinner"
+cp assets/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -37,6 +38,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleName</key>             <string>WindowPinner</string>
     <key>CFBundleDisplayName</key>      <string>WindowPinner</string>
     <key>CFBundlePackageType</key>      <string>APPL</string>
+    <key>CFBundleIconFile</key>         <string>AppIcon</string>
     <key>CFBundleShortVersionString</key><string>${VERSION}</string>
     <key>CFBundleVersion</key>          <string>${BUILD}</string>
     <key>LSMinimumSystemVersion</key>   <string>13.0</string>
