@@ -220,6 +220,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Live UUID→panel-key map to translate `com.apple.spaces` data into
+    /// panel-stable keys — but only for layouts saved with panel keys (1.6+).
+    /// Legacy layouts stored their spaces keyed by UUID, so they get an empty
+    /// map (identity) to preserve their original matching semantics.
+    private func spacesKeyMap(for layout: Layout) -> [String: String] {
+        let usesPanelKeys = !layout.displays.isEmpty && layout.displays.allSatisfy { $0.panelKey != nil }
+        return usesPanelKeys ? Displays.uuidToPanelKey() : [:]
+    }
+
     /// True when the saved layout for this display set no longer matches
     /// reality in the ways we know how to repair.
     private func driftedFromSavedLayout(fingerprint: String) -> Bool {
@@ -228,7 +237,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return true
         }
         if restoreSpacesEnabled, let spaces = layout.spaces, !spaces.isEmpty,
-           !Spaces.mappingMatches(spaces) {
+           !Spaces.mappingMatches(spaces, keyMap: spacesKeyMap(for: layout)) {
             return true
         }
         return false
@@ -288,7 +297,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             preserved = true
         } else {
             referenceDisplays = displays
-            referenceSpaces = Spaces.currentMapping()
+            // Capture the desktop mapping keyed by physical panel so it survives
+            // UUID swaps between EDID-identical monitors.
+            referenceSpaces = Spaces.currentMapping(keyMap: Displays.uuidToPanelKey())
             preserved = false
         }
 
@@ -335,10 +346,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             log.info("Restore (\(reason, privacy: .public)): no saved layout for current display set")
             return
         }
+        let spacesKeyMap = self.spacesKeyMap(for: layout)
         let arrangementOK = Displays.arrangementMatches(layout.displays)
         let spacesOK: Bool
         if let savedSpaces = layout.spaces, !savedSpaces.isEmpty {
-            spacesOK = Spaces.mappingMatches(savedSpaces)
+            spacesOK = Spaces.mappingMatches(savedSpaces, keyMap: spacesKeyMap)
         } else {
             spacesOK = true
         }
@@ -352,10 +364,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             var spacesFixed = false
             if self.restoreSpacesEnabled,
                let savedSpaces = layout.spaces, !savedSpaces.isEmpty,
-               !Spaces.mappingMatches(savedSpaces) {
+               !Spaces.mappingMatches(savedSpaces, keyMap: spacesKeyMap) {
                 log.info("Restore (\(reason, privacy: .public)): desktops are on the wrong displays")
                 self.suppressSnapshotsUntil = Date().addingTimeInterval(45)
-                spacesFixed = Spaces.restoreMapping(savedSpaces)
+                spacesFixed = Spaces.restoreMapping(savedSpaces, keyMap: spacesKeyMap)
             }
             // After a Dock restart, wait for Mission Control to settle
             // before placing windows.

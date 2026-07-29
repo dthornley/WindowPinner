@@ -9,6 +9,13 @@ monitor arrangement after sleep, lid-close, or unplugging external monitors.
   displays (identified by their hardware UUIDs) gets its own saved layout:
   "laptop only", "laptop + 2 office monitors", etc. Take the laptop to a
   meeting, come back, plug in — your office layout comes back.
+- **Handles identical monitors.** Two displays of the same make and model can
+  report the *same* EDID serial, so the UUID macOS derives from it isn't
+  reliably tied to a physical panel — after sleep macOS can swap which panel
+  is which, landing desktops on the wrong monitor. WindowPinner detects that
+  case and identifies each panel by its own alphanumeric serial (falling back
+  to the physical port), so arrangement and desktops are pinned to the actual
+  monitor. Requires each monitor to stay on its own cable/port.
 - **Snapshots automatically.** Every 30 seconds (only while the display
   configuration has been stable for 20+ seconds), plus right before sleep.
   It never snapshots in the messy window right after wake or a monitor
@@ -77,6 +84,13 @@ Logs go to the unified log:
 
 ```bash
 log stream --predicate 'subsystem == "com.darnt.WindowPinner"' --level info
+```
+
+To inspect how WindowPinner currently identifies your displays and maps
+desktops to physical panels (useful with identical monitors):
+
+```bash
+/Applications/WindowPinner.app/Contents/MacOS/WindowPinner --dump-displays
 ```
 
 ## Known limitations

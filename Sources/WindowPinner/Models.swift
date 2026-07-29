@@ -8,6 +8,18 @@ struct DisplayInfo: Codable {
     var width: Int
     var height: Int
     var isMain: Bool
+    /// Stable identity for the *physical panel*, used as the match key instead
+    /// of `uuid`. For a display whose EDID is unique among those connected this
+    /// is just `uuid`; for EDID-identical displays (same make/model/serial, so
+    /// macOS hands out UUIDs that aren't stably bound to a panel) it is a
+    /// "SN:"/"PORT:"-prefixed key derived from the monitor's own serial or its
+    /// physical port. Optional so layouts saved before this field decode as
+    /// `nil` and fall back to `uuid` (exact pre-1.6 behavior). See Displays.
+    var panelKey: String?
+
+    /// The key to match this display by: its physical-panel identity when
+    /// known, otherwise the macOS UUID (legacy layouts).
+    var matchKey: String { panelKey ?? uuid }
 }
 
 /// One window's saved geometry.

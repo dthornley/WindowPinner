@@ -27,8 +27,18 @@ enum Spaces {
         identifier == "Main" ? (mainDisplayUUID() ?? identifier) : identifier
     }
 
-    /// Live mapping: display UUID -> ordered user-desktop (type 0) UUIDs.
-    static func currentMapping() -> [String: [String]] {
+    /// Translates a live display UUID (as it appears in `com.apple.spaces`) into
+    /// the key used by the saved layout — the physical-panel key when one is
+    /// supplied, otherwise the UUID unchanged.
+    private static func key(_ uuid: String, _ keyMap: [String: String]) -> String {
+        keyMap[uuid] ?? uuid
+    }
+
+    /// Live mapping: saved key (panel key or display UUID) -> ordered
+    /// user-desktop (type 0) UUIDs. Pass `keyMap` (live UUID -> panel key) to
+    /// key the result by physical panel so it survives UUID swaps between
+    /// EDID-identical monitors; omit it for plain UUID keying.
+    static func currentMapping(keyMap: [String: String] = [:]) -> [String: [String]] {
         guard let raw = CGSCopyManagedDisplaySpaces(CGSMainConnectionID())?.takeRetainedValue(),
               let monitors = raw as? [[String: Any]] else { return [:] }
         var mapping: [String: [String]] = [:]
@@ -39,7 +49,7 @@ enum Spaces {
                 guard (space["type"] as? Int) == 0 else { return nil }
                 return space["uuid"] as? String
             }
-            mapping[resolve(identifier)] = userSpaces
+            mapping[key(resolve(identifier), keyMap)] = userSpaces
         }
         return mapping
     }
@@ -47,8 +57,8 @@ enum Spaces {
     /// True when every desktop that exists in both snapshot and present sits
     /// on its saved display, in the saved order. Desktops created or removed
     /// since the snapshot are ignored.
-    static func mappingMatches(_ saved: [String: [String]]) -> Bool {
-        let current = currentMapping()
+    static func mappingMatches(_ saved: [String: [String]], keyMap: [String: String] = [:]) -> Bool {
+        let current = currentMapping(keyMap: keyMap)
         let allCurrent = Set(current.values.flatMap { $0 })
         for (display, savedList) in saved {
             guard let liveList = current[display] else { continue } // display offline
@@ -64,7 +74,7 @@ enum Spaces {
     /// restarted. Refuses to write anything that would lose or duplicate a
     /// desktop.
     @discardableResult
-    static func restoreMapping(_ saved: [String: [String]]) -> Bool {
+    static func restoreMapping(_ saved: [String: [String]], keyMap: [String: String] = [:]) -> Bool {
         guard var config = CFPreferencesCopyAppValue(configKey, domain) as? [String: Any],
               var management = config["Management Data"] as? [String: Any],
               var monitors = management["Monitors"] as? [[String: Any]] else {
@@ -90,7 +100,7 @@ enum Spaces {
         for i in activeIndices {
             guard let identifier = monitors[i]["Display Identifier"] as? String,
                   let currentSpaces = monitors[i]["Spaces"] as? [[String: Any]] else { continue }
-            let display = resolve(identifier)
+            let display = key(resolve(identifier), keyMap)
             var newList: [[String: Any]] = []
             // Desktops the snapshot assigns to this display, in saved order.
             for uuid in saved[display] ?? [] {
