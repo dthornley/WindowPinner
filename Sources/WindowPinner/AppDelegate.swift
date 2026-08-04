@@ -174,7 +174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func didWake() {
         isSleeping = false
         guard autoEnabled else { return }
-        log.info("System woke → scheduling restores")
+        log.notice("System woke → scheduling restores")
         suppressSnapshotsUntil = Date().addingTimeInterval(35)
         // Displays keep settling for a while after wake; re-apply several
         // times so a late re-scramble by macOS still gets corrected. Each
@@ -189,7 +189,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// well have been scrambled while the panels were off.
     @objc private func screensDidWake() {
         guard autoEnabled, !isSleeping else { return }
-        log.info("Screens woke → scheduling restores")
+        log.notice("Screens woke → scheduling restores")
         suppressSnapshotsUntil = Date().addingTimeInterval(35)
         cancelPendingRestores()
         scheduleRestores(delays: [3, 8, 16, 28], reason: "screensDidWake")
@@ -203,7 +203,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard autoEnabled, !isSleeping else { return }
         suppressSnapshotsUntil = Date().addingTimeInterval(25)
         if changed {
-            log.info("Display set changed → \(fingerprint, privacy: .public)")
+            log.notice("Display set changed → \(fingerprint, privacy: .public)")
             cancelPendingRestores()
             // Debounce: monitors often enumerate one at a time when plugged in,
             // and keep settling afterwards — re-apply across a wider window.
@@ -214,7 +214,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Without this branch the whole scramble goes unnoticed, because
             // the fingerprint only encodes *which* displays are attached, not
             // where they sit.
-            log.info("Display arrangement/desktops drifted from saved layout → scheduling restores")
+            log.notice("Display arrangement/desktops drifted from saved layout → scheduling restores")
             cancelPendingRestores()
             scheduleRestores(delays: [2, 6, 14], reason: "drift")
         }
@@ -253,7 +253,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !isSleeping, pendingRestores.isEmpty,
            Date().timeIntervalSince(lastDriftRepair) >= driftRepairCooldown,
            driftedFromSavedLayout(fingerprint: Displays.currentFingerprint()) {
-            log.info("Periodic check: arrangement/desktops drifted → scheduling restore")
+            log.notice("Periodic check: arrangement/desktops drifted → scheduling restore")
             lastDriftRepair = Date()
             scheduleRestores(delays: [1], reason: "periodicDrift")
             return
@@ -343,7 +343,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let fingerprint = Displays.currentFingerprint()
         guard let layout = store.layout(for: fingerprint) else {
-            log.info("Restore (\(reason, privacy: .public)): no saved layout for current display set")
+            log.notice("Restore (\(reason, privacy: .public)): no saved layout for current display set")
             return
         }
         let spacesKeyMap = self.spacesKeyMap(for: layout)
@@ -354,7 +354,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             spacesOK = true
         }
-        log.info("Restore (\(reason, privacy: .public)): arrangement \(arrangementOK ? "matches" : "DIFFERS", privacy: .public), desktops \(spacesOK ? "match" : "DIFFER", privacy: .public)")
+        log.notice("Restore (\(reason, privacy: .public)): arrangement \(arrangementOK ? "matches" : "DIFFERS", privacy: .public), desktops \(spacesOK ? "match" : "DIFFER", privacy: .public)")
 
         let arrangementFixed = restoreArrangementEnabled && Displays.restoreArrangement(layout.displays)
         // Give WindowServer time to settle if displays were just rearranged,
@@ -365,28 +365,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if self.restoreSpacesEnabled,
                let savedSpaces = layout.spaces, !savedSpaces.isEmpty,
                !Spaces.mappingMatches(savedSpaces, keyMap: spacesKeyMap) {
-                log.info("Restore (\(reason, privacy: .public)): desktops are on the wrong displays")
+                log.notice("Restore (\(reason, privacy: .public)): desktops are on the wrong displays")
                 self.suppressSnapshotsUntil = Date().addingTimeInterval(45)
                 spacesFixed = Spaces.restoreMapping(savedSpaces, keyMap: spacesKeyMap)
             }
             // After a Dock restart, wait for Mission Control to settle
             // before placing windows.
             DispatchQueue.main.asyncAfter(deadline: .now() + (spacesFixed ? 4 : 0)) {
-                let moved = Windows.restore(layout.windows)
-                self.noteRestore(moved: moved, arrangementFixed: arrangementFixed, spacesFixed: spacesFixed)
+                let outcome = Windows.restore(layout.windows)
+                self.noteRestore(outcome: outcome, arrangementFixed: arrangementFixed, spacesFixed: spacesFixed)
                 // Build the suffix separately and mark it public: os.log
                 // redacts dynamic string interpolation by default, which
                 // otherwise hides exactly the part worth reading.
-                let extras = (arrangementFixed ? ", displays rearranged" : "")
+                let extras = (outcome.unminimized > 0 ? ", \(outcome.unminimized) unminimized" : "")
+                    + (arrangementFixed ? ", displays rearranged" : "")
                     + (spacesFixed ? ", desktops re-mapped" : "")
-                log.info("Restore (\(reason, privacy: .public)): \(moved) window(s) moved\(extras, privacy: .public)")
+                log.notice("Restore (\(reason, privacy: .public)): \(outcome.moved) window(s) moved\(extras, privacy: .public)")
             }
         }
     }
 
-    private func noteRestore(moved: Int, arrangementFixed: Bool, spacesFixed: Bool) {
+    private func noteRestore(outcome: Windows.RestoreResult, arrangementFixed: Bool, spacesFixed: Bool) {
         let time = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .short)
-        var summary = "Last restore: \(moved) window\(moved == 1 ? "" : "s") moved at \(time)"
+        var summary = "Last restore: \(outcome.moved) window\(outcome.moved == 1 ? "" : "s") moved at \(time)"
+        if outcome.unminimized > 0 { summary += ", \(outcome.unminimized) unminimized" }
         if arrangementFixed { summary += ", displays rearranged" }
         if spacesFixed { summary += ", desktops re-mapped" }
         lastRestoreSummary = summary

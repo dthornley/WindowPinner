@@ -100,6 +100,9 @@ desktops to physical panels (useful with identical monitors):
   back in a different order (still on the right display, though).
 - Spaces/Mission Control desktops aren't managed — a window is moved within
   the space it currently lives on.
-- Minimized windows are left minimized; full-screen windows are ignored.
+- Windows you minimized yourself stay minimized (their position is still
+  recorded, so they land correctly when you unminimize them). Windows that a
+  wake scramble minimized behind your back are unminimized and placed.
+  Full-screen windows are ignored.
 - Apps started *after* the last snapshot aren't repositioned until the next
   snapshot cycle picks them up.

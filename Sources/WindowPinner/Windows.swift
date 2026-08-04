@@ -116,7 +116,9 @@ enum Windows {
             for (index, win) in wins.enumerated() {
                 guard isStandardWindow(win) else { continue }
                 let minimized = boolAttr(win, kAXMinimizedAttribute)
-                guard let f = minimized ? CGRect.zero : frame(of: win) else { continue }
+                // AX reports a minimized window's frame as it will be when
+                // unminimized — record it, so the window can be placed later.
+                guard let f = frame(of: win) ?? (minimized ? CGRect.zero : nil) else { continue }
                 // Skip zero-sized ghosts.
                 if !minimized && (f.width < 20 || f.height < 20) { continue }
                 records.append(WindowRecord(
@@ -134,25 +136,38 @@ enum Windows {
         return records
     }
 
+    private static func setMinimized(_ el: AXUIElement, _ minimized: Bool) {
+        AXUIElementSetAttributeValue(el, kAXMinimizedAttribute as CFString,
+                                     (minimized ? kCFBooleanTrue : kCFBooleanFalse) as CFTypeRef)
+    }
+
     // MARK: - Restore
 
-    /// Moves windows back to their recorded frames. Windows are matched per
-    /// app: exact title match first, then by index within the app's window
-    /// list. Returns the number of windows actually moved.
-    @discardableResult
-    static func restore(_ records: [WindowRecord]) -> Int {
-        let byBundle = Dictionary(grouping: records.filter { !$0.isMinimized }, by: \.bundleID)
+    struct RestoreResult {
         var moved = 0
+        var unminimized = 0
+    }
+
+    /// Moves windows back to their recorded frames. Windows are matched per
+    /// app by WindowServer id, then exact title, then original index. A window
+    /// that the snapshot recorded as open but is now minimized (macOS sometimes
+    /// minimizes windows during a wake scramble) is unminimized and placed; a
+    /// window the user minimized before the snapshot stays minimized.
+    @discardableResult
+    static func restore(_ records: [WindowRecord]) -> RestoreResult {
+        let byBundle = Dictionary(grouping: records, by: \.bundleID)
+        var result = RestoreResult()
 
         for app in regularApps() {
             let bundleID = app.bundleIdentifier ?? "pid.\(app.processIdentifier)"
             guard let wanted = byBundle[bundleID] else { continue }
 
             let wins = axWindows(of: app.processIdentifier)
-            var liveWindows: [(index: Int, el: AXUIElement, title: String, number: UInt32?)] = []
+            var liveWindows: [(index: Int, el: AXUIElement, title: String, number: UInt32?, minimized: Bool)] = []
             for (index, win) in wins.enumerated() {
-                guard isStandardWindow(win), !boolAttr(win, kAXMinimizedAttribute) else { continue }
-                liveWindows.append((index, win, stringAttr(win, kAXTitleAttribute) ?? "", windowNumber(of: win)))
+                guard isStandardWindow(win) else { continue }
+                liveWindows.append((index, win, stringAttr(win, kAXTitleAttribute) ?? "",
+                                    windowNumber(of: win), boolAttr(win, kAXMinimizedAttribute)))
             }
 
             var unclaimed = liveWindows
@@ -198,7 +213,20 @@ enum Windows {
             }
 
             for (el, record) in pairs {
+                let liveMinimized = boolAttr(el, kAXMinimizedAttribute)
+                if record.isMinimized {
+                    // The user had this window minimized at snapshot time —
+                    // don't pop it open. If they've since unminimized it, fall
+                    // through and place it at its recorded frame (if we have one).
+                    if liveMinimized { continue }
+                } else if liveMinimized {
+                    // Snapshot says open, but the wake scramble minimized it:
+                    // bring it back before placing.
+                    setMinimized(el, false)
+                    result.unminimized += 1
+                }
                 let target = CGRect(x: record.x, y: record.y, width: record.width, height: record.height)
+                if target.width < 20 || target.height < 20 { continue } // no usable frame recorded
                 if let current = frame(of: el),
                    abs(current.origin.x - target.origin.x) < 5,
                    abs(current.origin.y - target.origin.y) < 5,
@@ -207,9 +235,9 @@ enum Windows {
                     continue // already where it belongs
                 }
                 setFrame(el, target)
-                moved += 1
+                result.moved += 1
             }
         }
-        return moved
+        return result
     }
 }

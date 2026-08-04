@@ -210,7 +210,7 @@ enum Displays {
                 log.error("CGCompleteDisplayConfiguration failed: \(result.rawValue)")
                 return false
             }
-            log.info("Display arrangement restored")
+            log.notice("Display arrangement restored")
             return true
         } else {
             CGCancelDisplayConfiguration(config)

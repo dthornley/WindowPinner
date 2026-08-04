@@ -152,7 +152,7 @@ enum Spaces {
             return false
         }
 
-        log.info("Spaces: desktop mapping rewritten, restarting Dock")
+        log.notice("Spaces: desktop mapping rewritten, restarting Dock")
         let killall = Process()
         killall.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
         killall.arguments = ["Dock"]
