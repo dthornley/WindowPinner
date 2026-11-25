@@ -44,13 +44,46 @@ monitor arrangement after sleep, lid-close, or unplugging external monitors.
   mapping is backed up under
   `~/Library/Application Support/WindowPinner/spaces-backups/`.
 
-## Build & install
+## Install
+
+**Download:** the latest `.dmg` is on the
+[Releases page](https://github.com/dthornley/WindowPinner/releases). The app
+checks for a newer release once a day (and shortly after launch) and offers to
+install it; **Check for Updates…** in the menu does the same on demand, and
+**Check for Updates Automatically** turns the daily check off.
+
+## Build
 
 ```bash
 ./build.sh install     # builds, copies to /Applications, launches
 ```
 
 Or just `./build.sh` to produce `dist/WindowPinner.app` without installing.
+The build fetches [Sparkle](https://sparkle-project.org) (the updater) via
+SwiftPM and embeds it in the app bundle.
+
+### Releasing
+
+```bash
+./build.sh release
+```
+
+Bump `VERSION` and `BUILD` in `build.sh` first (Sparkle compares `BUILD`, so
+it must go up every release) and commit. The script builds, signs and
+notarizes the app and DMG, signs the update zip with the Sparkle EdDSA key,
+writes `appcast.xml`, tags `v<VERSION>`, pushes, and publishes the GitHub
+release with the DMG, the zip and the appcast. The running app downloads
+`releases/latest/download/appcast.xml` to learn about new versions. Release
+notes come from `RELEASE_NOTES.md` when present, otherwise from the commits
+since the previous tag.
+
+The update signature uses a key pair separate from Apple's. The private key
+lives in the login keychain (created with Sparkle's `generate_keys`, found
+under `.build/artifacts/sparkle/Sparkle/bin/` after a build); the public key
+is `SPARKLE_PUBLIC_KEY` in `build.sh`. Back the private key up
+(`generate_keys -x sparkle.key`): the updater refuses archives signed with
+any other key, so losing it means shipping the next version by hand. On a
+new Mac, import it with `generate_keys -f sparkle.key`.
 
 ### First run
 
@@ -75,6 +108,8 @@ Or just `./build.sh` to produce `dist/WindowPinner.app` without installing.
 - **Also Restore Display Arrangement** — re-applies saved monitor positions
   (fixes swapped displays), not just window positions.
 - **Start at Login** — registers as a login item.
+- **Check for Updates… / Check for Updates Automatically** — look for a
+  newer release on GitHub now, or toggle the daily background check.
 - **Forget All Layouts** — wipes saved state
   (`~/Library/Application Support/WindowPinner/layouts.json`).
 

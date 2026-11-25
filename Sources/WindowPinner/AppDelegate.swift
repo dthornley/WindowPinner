@@ -5,6 +5,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var statusItem: NSStatusItem!
     private let store = LayoutStore()
+    private let updater = Updater()
 
     // Snapshots are only taken when the display configuration has been
     // stable for a while, so we never save a scrambled post-wake layout.
@@ -90,6 +91,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func buildMenu() -> NSMenu {
         let menu = NSMenu()
         menu.delegate = self
+        // menuNeedsUpdate decides enablement; AppKit's automatic validation
+        // would otherwise re-enable the update items whenever a target responds.
+        menu.autoenablesItems = false
 
         let version = NSMenuItem(title: "WindowPinner \(Self.versionString)", action: nil, keyEquivalent: "")
         version.isEnabled = false
@@ -128,6 +132,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(login)
 
         menu.addItem(.separator())
+        let check = NSMenuItem(title: "Check for Updates…", action: #selector(Updater.checkForUpdates(_:)), keyEquivalent: "")
+        check.target = updater
+        menu.addItem(check)
+        let autoUpdate = NSMenuItem(title: "Check for Updates Automatically", action: #selector(toggleAutoUpdate), keyEquivalent: "")
+        autoUpdate.target = self
+        menu.addItem(autoUpdate)
+
+        menu.addItem(.separator())
         menu.addItem(withTitle: "Forget All Layouts", action: #selector(forgetAll), keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit WindowPinner", action: #selector(quit), keyEquivalent: "q").target = self
@@ -156,6 +168,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             log.error("Login item toggle failed: \(error.localizedDescription)")
         }
     }
+
+    @objc private func toggleAutoUpdate() { updater.automaticChecks.toggle() }
 
     @objc private func forgetAll() { store.clearAll() }
 
@@ -405,6 +419,10 @@ extension AppDelegate: NSMenuDelegate {
             case #selector(toggleArrangement): item.state = restoreArrangementEnabled ? .on : .off
             case #selector(toggleSpaces): item.state = restoreSpacesEnabled ? .on : .off
             case #selector(toggleLogin): item.state = SMAppService.mainApp.status == .enabled ? .on : .off
+            case #selector(Updater.checkForUpdates(_:)): item.isEnabled = updater.canCheck
+            case #selector(toggleAutoUpdate):
+                item.state = updater.automaticChecks ? .on : .off
+                item.isEnabled = Updater.configured
             default: break
             }
         }
